@@ -295,6 +295,7 @@ export class PiAcpSession {
   // Ensure `session/update` notifications are sent in order and can be awaited
   // before completing a `session/prompt` request.
   private lastEmit: Promise<void> = Promise.resolve()
+  private lastUsage: { used: number; size: number } | null = null
 
   constructor(opts: {
     sessionId: string
@@ -415,6 +416,27 @@ export class PiAcpSession {
 
   private async flushEmits(): Promise<void> {
     await this.lastEmit
+  }
+
+  /** Publish pi's current context-window reading when one is available. */
+  async sendUsageUpdate(): Promise<void> {
+    try {
+      const stats = (await this.proc.getSessionStats()) as any
+      const contextUsage = stats?.contextUsage
+      const used = contextUsage?.tokens
+      const size = contextUsage?.contextWindow
+
+      if (Number.isSafeInteger(used) && used >= 0 && Number.isSafeInteger(size) && size > 0) {
+        if (!this.lastUsage || this.lastUsage.used !== used || this.lastUsage.size !== size) {
+          this.lastUsage = { used, size }
+          this.emit({ sessionUpdate: 'usage_update', used, size })
+        }
+      }
+    } catch {
+      // Older pi versions may not expose contextUsage. Usage is optional in ACP.
+    }
+
+    await this.flushEmits()
   }
 
   private emitBashToolCall(params: {
@@ -837,9 +859,9 @@ export class PiAcpSession {
       }
 
       case 'agent_settled': {
-        // Ensure all updates derived from pi events are delivered before we resolve
-        // the ACP `session/prompt` request.
-        void this.flushEmits().finally(() => {
+        // Publish the final context reading and ensure all updates derived from pi
+        // events are delivered before we resolve the ACP `session/prompt` request.
+        void this.sendUsageUpdate().finally(() => {
           const reason: StopReason = this.cancelRequested ? 'cancelled' : 'end_turn'
           this.pendingTurn?.resolve(reason)
           this.pendingTurn = null

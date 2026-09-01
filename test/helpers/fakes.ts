@@ -28,6 +28,7 @@ export class FakePiRpcProcess {
   // spies
   readonly prompts: Array<{ message: string; attachments: unknown[] }> = []
   readonly extensionUiResponses: unknown[] = []
+  sessionStats: unknown = {}
   abortCount = 0
 
   onEvent(handler: (ev: PiRpcEvent) => void): () => void {
@@ -63,6 +64,10 @@ export class FakePiRpcProcess {
 
   async getMessages(): Promise<any> {
     return { messages: [] }
+  }
+
+  async getSessionStats(): Promise<unknown> {
+    return this.sessionStats
   }
 }
 

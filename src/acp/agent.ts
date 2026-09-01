@@ -471,6 +471,7 @@ export class PiAcpAgent implements ACPAgent {
             content: { type: 'text', text }
           }
         })
+        await session.sendUsageUpdate()
 
         return { stopReason: 'end_turn' }
       }
@@ -1073,9 +1074,10 @@ export class PiAcpAgent implements ACPAgent {
       }
     }
 
-    // Advertise slash commands after the response so the client knows the session exists.
+    // Advertise session state after the response so the client knows the session exists.
     setTimeout(() => {
       void (async () => {
+        await session.sendUsageUpdate()
         try {
           const pi = (await proc.getCommands()) as any
           const { commands } = toAvailableCommandsFromPiGetCommands(pi, {
@@ -1138,6 +1140,7 @@ export class PiAcpAgent implements ACPAgent {
     const session = await this.restoreSession(params.sessionId)
     await setSessionModel(session.proc, params.modelId)
     await emitConfigOptionsUpdate(this.conn, session.sessionId, session.proc)
+    await session.sendUsageUpdate()
   }
 
   async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
@@ -1193,6 +1196,7 @@ export class PiAcpAgent implements ACPAgent {
     }
 
     const configOptions = await emitConfigOptionsUpdate(this.conn, session.sessionId, session.proc)
+    if (configId === MODEL_CONFIG_ID) await session.sendUsageUpdate()
     return { configOptions }
   }
 }

@@ -62,6 +62,65 @@ test('PiAcpSession: emits agent_thought_chunk for thinking_delta', async () => {
   })
 })
 
+test('PiAcpSession: emits context usage before a settled prompt completes', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+  proc.sessionStats = {
+    contextUsage: { tokens: 56_549, contextWindow: 272_000, percent: 20.79 }
+  }
+
+  const session = new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: []
+  })
+
+  const prompt = session.prompt('hello')
+  proc.emit({ type: 'agent_start' })
+  proc.emit({ type: 'agent_end' })
+  proc.emit({ type: 'agent_settled' })
+
+  assert.equal(await prompt, 'end_turn')
+  assert.deepEqual(
+    conn.updates.find(entry => entry.update.sessionUpdate === 'usage_update'),
+    {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 56_549, size: 272_000 }
+    }
+  )
+})
+
+test('PiAcpSession: omits unavailable usage and de-duplicates unchanged readings', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+  const session = new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: []
+  })
+
+  proc.sessionStats = { contextUsage: { tokens: null, contextWindow: 272_000, percent: null } }
+  await session.sendUsageUpdate()
+  assert.equal(conn.updates.length, 0)
+
+  proc.sessionStats = { contextUsage: { tokens: 1_200, contextWindow: 272_000, percent: 0.44 } }
+  await session.sendUsageUpdate()
+  await session.sendUsageUpdate()
+
+  assert.deepEqual(conn.updates, [
+    {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 1_200, size: 272_000 }
+    }
+  ])
+})
+
 test('PiAcpSession: emits tool_call + tool_call_update + completes', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
