@@ -205,6 +205,105 @@ test('PiAcpSession: emits tool locations from pi path args', async () => {
   assert.deepEqual((conn.updates[0]!.update as any).locations, [{ path: `${process.cwd()}/src/acp/session.ts` }])
 })
 
+test('PiAcpSession: forwards compact Fusion progress including empty banners', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: []
+  })
+
+  proc.emit({
+    type: 'message_end',
+    message: {
+      role: 'custom',
+      customType: 'fusion-harness',
+      content: 'Research stage complete',
+      display: true,
+      details: {
+        kind: 'multi',
+        command: 'fh-fusion',
+        ok: true,
+        sources: [{ role: 'ARCHITECT', model: 'anthropic/opus', slotName: 'Opus', status: 'done', toolEvents: [{ name: 'read', argument: 'large' }] }],
+        answers: [{ role: 'ARCHITECT', model: 'anthropic/opus', text: 'very large answer' }]
+      }
+    }
+  } as any)
+  proc.emit({
+    type: 'message_end',
+    message: {
+      role: 'custom',
+      customType: 'fusion-harness',
+      content: '',
+      display: true,
+      details: { kind: 'banner', command: 'fh-fusion', ok: true, roles: [{ role: 'ARCHITECT', model: 'anthropic/opus', slotName: 'Opus' }] }
+    }
+  } as any)
+  proc.emit({
+    type: 'message_end',
+    message: {
+      role: 'custom',
+      customType: 'fusion-harness',
+      content: 'hidden continuation',
+      display: false
+    }
+  } as any)
+
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.equal(conn.updates.length, 2)
+  assert.deepEqual((conn.updates[0]!.update as any)._meta.piAcp.details, {
+    kind: 'multi',
+    command: 'fh-fusion',
+    ok: true,
+    sources: [{ role: 'ARCHITECT', model: 'anthropic/opus', slotName: 'Opus', status: 'done' }],
+    answers: [{ role: 'ARCHITECT', model: 'anthropic/opus', text: 'very large answer' }]
+  })
+  assert.deepEqual(conn.updates[1]!.update, {
+    sessionUpdate: 'agent_message_chunk',
+    content: { type: 'text', text: '' },
+    _meta: {
+      piAcp: {
+        customType: 'fusion-harness',
+        details: {
+          kind: 'banner',
+          command: 'fh-fusion',
+          ok: true,
+          roles: [{ role: 'ARCHITECT', model: 'anthropic/opus', slotName: 'Opus' }]
+        }
+      }
+    }
+  })
+})
+
+test('PiAcpSession: extension command completes on RPC response without agent_settled', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+  proc.sessionStats = { contextUsage: { tokens: 42, contextWindow: 1000 } }
+  const session = new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: []
+  })
+
+  const reason = await session.runExtensionCommand('/fh-system-prompt')
+
+  assert.equal(reason, 'end_turn')
+  assert.deepEqual(proc.prompts, [{ message: '/fh-system-prompt', attachments: [] }])
+  assert.deepEqual(
+    conn.updates.map(item => item.update.sessionUpdate),
+    ['session_info_update', 'usage_update', 'session_info_update']
+  )
+})
+
 test('PiAcpSession: handles extension select via ACP permission request', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextPermissionResponse = { outcome: { outcome: 'selected', optionId: 'choice-1' } }
